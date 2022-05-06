@@ -1,0 +1,56 @@
+_target_: src.models.adnerf_module.AdNeRFLitModule
+lr: 5e-4
+weight_decay: 0.0005
+# betas: (0.9, 0.999)
+
+options: ${options}
+
+pos_encoder:
+  input_dims: 3
+  include_input: True
+  max_freq_log2: 9
+  num_freqs: 10 # multires
+  log_sampling: True
+  periodic_fns: 
+    - torch.sin
+    - torch.cos
+
+pos_encoder_view_dirs:
+  input_dims: 3
+  include_input: True
+  max_freq_log2: 3
+  num_freqs: 4 # multires
+  log_sampling: True
+  periodic_fns: 
+    - torch.sin
+    - torch.cos
+
+audio_net:
+  dim_aud: 64
+  win_size: 16
+
+audio_attn_net:
+  dim_aud: 32
+  seq_len: 8
+
+nerf_coarse:
+  D: 8
+  W: 256
+  dim_aud: 64 # 이거 처리
+  skips:
+    - 4
+
+nerf_fine:
+  D: 8
+  W: 256
+  dim_aud: 64
+  skips:
+    - 4
+
+
+
+
+
+
+
+

@@ -3,10 +3,10 @@
 # specify here default training configuration
 defaults:
   - _self_
-  - datamodule: mnist.yaml
-  - model: mnist.yaml
+  - datamodule: ray.yaml
+  - model: adnerf.yaml
   - callbacks: default.yaml
-  - logger: null # set logger here or use command line (e.g. `python train.py logger=tensorboard`)
+  - logger: tensorboard.yaml # set logger here or use command line (e.g. `python train.py logger=tensorboard`)
   - trainer: default.yaml
   - log_dir: default.yaml
 
@@ -28,13 +28,30 @@ defaults:
   - override hydra/hydra_logging: colorlog
   - override hydra/job_logging: colorlog
 
+# rendering options
+options:
+  n_samples_per_ray_coarse: 64
+  n_samples_per_ray_fine: 128
+  n_rays_per_batch: 2048
+  sample_rate_in_bbox: 0.95
+  audio_smoothing_start_step: 0
+  smoothing_size: 8
+  use_jitter: True
+  neareast_distance: 0.6417311906814576
+  farthest_distance: 1.2417311906814574
+  output_raw_noise_std: 0
+  sampling_linearly_in_disparity: True
+  white_background: False
+  use_half_resolution: True
+
+
 # path to original working directory
 # hydra hijacks working directory by changing it to the new log directory
 # https://hydra.cc/docs/next/tutorials/basic/running_your_app/working_directory
 original_work_dir: ${hydra:runtime.cwd}
 
 # path to folder with data
-data_dir: ${original_work_dir}/data/
+data_dir: ${original_work_dir}/data/Obama/
 
 # pretty print config at the start of the run using Rich library
 print_config: True
@@ -47,7 +64,7 @@ train: True
 
 # evaluate on test set, using best model weights achieved during training
 # lightning chooses best weights based on the metric specified in checkpoint callback
-test: True
+test: False
 
 # seed for random number generators in pytorch, numpy and python.random
 seed: null
@@ -55,3 +72,5 @@ seed: null
 # default name for the experiment, determines logging folder path
 # (you can overwrite this name in experiment configs)
 name: "default"
+
+

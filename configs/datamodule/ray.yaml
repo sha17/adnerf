@@ -1,0 +1,12 @@
+_target_: src.datamodules.ray_datamodule.RayDataModule
+
+data_dir: ${data_dir} # data_dir is specified in config.yaml
+train_batch_size: 1
+valid_batch_size: 1
+test_batch_size: 1
+num_workers: 8
+pin_memory: True
+# use_test_data: False
+# test_data_dir: ${test_data_dir} # 이거 체크
+test_data_sample_rate: 8
+options: ${options}
