@@ -27,7 +27,7 @@ class AdNeRFLitModule(LightningModule):
     def __init__(
         self,
         lr,
-        weight_decay,
+        #weight_decay,
         pos_encoder: DictConfig,
         pos_encoder_view_dirs: DictConfig, 
         nerf_coarse: DictConfig,
@@ -108,6 +108,7 @@ class AdNeRFLitModule(LightningModule):
             [k+f'_{mode}' for k in keys],
             [raw, rgb_map, disp_map, acc_map, weights, depth_map]))
         return outputs
+        # return raw, rgb_map, disp_map, acc_map, weights, depth_map
 
     def step(self, batch, batch_idx, chunk_sz=1024, output_to_cpu=False): # chunk size 설정
         """
@@ -122,7 +123,20 @@ class AdNeRFLitModule(LightningModule):
         else:
             auds = self.audio_net(auds) # [B, 64]
 
-        outputs = {}
+        outputs = {
+            # 'raw_coarse':[],
+            # 'rgb_map_coarse':[], 
+            # 'disp_map_coarse':[],
+            # 'acc_map_coarse':[],
+            # 'weights_coarse':[],
+            # 'depth_map_coarse':[],
+            # 'raw_fine':[],
+            # 'rgb_map_fine':[], 
+            # 'disp_map_fine':[],
+            # 'acc_map_fine':[],
+            # 'weights_fine':[],
+            # 'depth_map_fine':[],
+        }
         for i in range(0, R, chunk_sz):
              # [B, R, ch] is too large, so run in chunk [B, chunk, ch]
             rays_o_chunk = rays_o[:, i:i+chunk_sz]
@@ -264,10 +278,10 @@ class AdNeRFLitModule(LightningModule):
         #     cfgs.append({'params': self.nerf_fine.parameters(), 'lr': self.hparams.nerf_fine})
 
         optimizer = torch.optim.Adam([ #'weight_decay':self.hparams.weight_decay
-            {'params': self.nerf_coarse.parameters(), 'lr':self.hparams.lr, 'weight_decay':self.hparams.weight_decay},          # for faceNeRF
-            {'params': self.nerf_fine.parameters(), 'lr':self.hparams.lr, 'weight_decay':self.hparams.weight_decay},
-            {'params': self.audio_net.parameters(), 'lr':self.hparams.lr, 'weight_decay':self.hparams.weight_decay},     # for AudioNet
-            {'params': self.audio_attn_net.parameters(), 'lr':self.hparams.lr, 'weight_decay':self.hparams.weight_decay}, # for AudioAttnNet
+            {'params': self.nerf_coarse.parameters(), 'lr':self.hparams.lr},#, 'weight_decay':self.hparams.weight_decay},          # for faceNeRF
+            {'params': self.nerf_fine.parameters(), 'lr':self.hparams.lr},#, 'weight_decay':self.hparams.weight_decay},
+            {'params': self.audio_net.parameters(), 'lr':self.hparams.lr},#, 'weight_decay':self.hparams.weight_decay},     # for AudioNet
+            {'params': self.audio_attn_net.parameters(), 'lr':self.hparams.lr}#, 'weight_decay':self.hparams.weight_decay}, # for AudioAttnNet
         ])
-        #scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=1000, gamma=0.1)
+        #scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=250, gamma=0.1)
         return [optimizer]#, [scheduler]
