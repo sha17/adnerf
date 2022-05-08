@@ -1,6 +1,6 @@
 _target_: src.models.adnerf_module.AdNeRFLitModule
-lr: 5e-4
-weight_decay: 0.0005
+lr: 5e-3
+#weight_decay: 0.00005
 # betas: (0.9, 0.999)
 
 options: ${options}
