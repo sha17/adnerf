@@ -220,7 +220,7 @@ class AdNeRFLitModule(LightningModule):
         return {"loss": loss, "preds": preds, "targets": targets}
 
     def validation_epoch_end(self, outputs: List[Any]):
-        psnr = self.val_psnr.compute()
+        psnr = self.val_psnr.to(self.device).compute()
         self.val_psnr_best.update(psnr)
         self.log("val/psnr_best", self.val_psnr_best.compute(), on_epoch=True, prog_bar=True)
 
