@@ -234,7 +234,7 @@ class AdNeRFLitModule(LightningModule):
         return {"loss": loss, "preds": preds, "targets": targets}
 
     def validation_epoch_end(self, outputs: List[Any]):
-        psnr = self.val_psnr.compute()
+        psnr = self.val_psnr.to(self.device).compute()
         self.val_psnr_best.update(psnr)
         self.log("val/psnr_best", self.val_psnr_best.compute(), on_epoch=True, prog_bar=True)
 
@@ -283,5 +283,5 @@ class AdNeRFLitModule(LightningModule):
             {'params': self.audio_net.parameters(), 'lr':self.hparams.lr},#, 'weight_decay':self.hparams.weight_decay},     # for AudioNet
             {'params': self.audio_attn_net.parameters(), 'lr':self.hparams.lr}#, 'weight_decay':self.hparams.weight_decay}, # for AudioAttnNet
         ])
-        #scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=250, gamma=0.1)
+        #scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=1000, gamma=0.1)
         return [optimizer]#, [scheduler]
