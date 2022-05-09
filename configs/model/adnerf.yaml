@@ -30,7 +30,7 @@ audio_net:
   win_size: 16
 
 audio_attn_net:
-  dim_aud: 32
+  dim_aud: 64
   seq_len: 8
 
 nerf_coarse:

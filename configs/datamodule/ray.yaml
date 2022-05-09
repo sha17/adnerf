@@ -1,12 +1,17 @@
 _target_: src.datamodules.ray_datamodule.RayDataModule
 
 data_dir: ${data_dir} # data_dir is specified in config.yaml
-train_batch_size: 4
+aud_file: aud.npy
+ray_file: ray.npy
+options: ${options}
+
+train_batch_size: 16
 valid_batch_size: 1
 test_batch_size: 1
 num_workers: 8
 pin_memory: True
-# use_test_data: False
-# test_data_dir: ${test_data_dir} # 이거 체크
-test_data_sample_rate: 8
-options: ${options}
+val_frame_sample_rate: 8
+
+test_file: transforms_val.json
+test_ray_file: ray_test.npy
+test_frame_sample_rate: 8

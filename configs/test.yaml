@@ -3,10 +3,10 @@
 # specify here default evaluation configuration
 defaults:
   - _self_
-  - datamodule: mnist.yaml # choose the datamodule for evaluation
-  - model: mnist.yaml
+  - datamodule: ray.yaml
+  - model: adnerf.yaml
   - callbacks: null
-  - logger: null
+  - logger: tensorboard.yaml
   - trainer: default.yaml
   - log_dir: evaluation.yaml
 
@@ -15,6 +15,15 @@ defaults:
   # enable color logging
   - override hydra/hydra_logging: colorlog
   - override hydra/job_logging: colorlog
+
+# rendering options
+options:
+  n_samples_per_ray_coarse: 64
+  n_samples_per_ray_fine: 128
+  neareast_distance: 0.6417311906814576
+  farthest_distance: 1.2417311906814574
+  sampling_linearly_in_disparity: True
+  white_background: False
 
 original_work_dir: ${hydra:runtime.cwd}
 

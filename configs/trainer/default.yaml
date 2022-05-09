@@ -3,11 +3,11 @@ _target_: pytorch_lightning.Trainer
 gpus: 1
 
 min_epochs: 1
-max_epochs: 300
+max_epochs: 2
 
 # number of validation steps to execute at the beginning of the training
 num_sanity_val_steps: 0
-check_val_every_n_epoch: 5
+val_check_interval: 0.5
 
 precision: 16
 

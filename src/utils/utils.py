@@ -13,15 +13,16 @@ def load_audface_data(basedir, testskip=1, test_file=None, aud_file=None):
         poses = []
         auds = []
         aud_features = np.load(os.path.join(basedir, aud_file))
-        for frame in meta['frames'][::testskip]:
+
+        for frame in meta['frames'][::testskip]: #
             poses.append(np.array(frame['transform_matrix']))
-            auds.append(aud_features[frame['frame_id']])
+            auds.append(aud_features[min(frame['aud_id'], aud_features.shape[0]-1)]) #'frame_id' -> 'img_id'
         poses = np.array(poses).astype(np.float32)
         auds = np.array(auds).astype(np.float32)
         bc_img = cv2.imread(os.path.join(basedir, 'bc.jpg'))
         bc_img = cv2.cvtColor(bc_img, cv2.COLOR_BGR2RGB)
         H, W = bc_img.shape[0], bc_img.shape[1]
-        focal, cx, cy = float(meta['focal_length']), float(
+        focal, cx, cy = float(meta['focal_len']), float( #'focal_length' -> 'focal_len'
             meta['cx']), float(meta['cy'])
         return poses, auds, bc_img, [H, W, focal, cx, cy]
 
@@ -30,16 +31,14 @@ def load_audface_data(basedir, testskip=1, test_file=None, aud_file=None):
     for s in splits:
         with open(os.path.join(basedir, 'transforms_{}.json'.format(s)), 'r') as fp:
             metas[s] = json.load(fp)
-    all_frame_ids = []
     all_imgs = []
     all_poses = []
     all_auds = []
     all_sample_rects = []
-    aud_features = np.load(os.path.join(basedir, 'aud.npy'))
+    aud_features = np.load(os.path.join(basedir, aud_file))
     counts = [0]
     for s in splits:
         meta = metas[s]
-        frame_ids = []
         imgs = []
         poses = []
         auds = []
@@ -50,29 +49,22 @@ def load_audface_data(basedir, testskip=1, test_file=None, aud_file=None):
             skip = 1
         else:
             skip = testskip
-
-        for frame in meta['frames'][::skip]:
-            fname = os.path.join(basedir, 'head_imgs',
-                                 str(frame['img_id']) + '.jpg')
-            frame_ids.append(frame['img_id'])
+        for frame in meta['frames'][::skip]: #
+            fname = os.path.join(basedir, 'head_imgs', str(frame['img_id']) + '.jpg')
             imgs.append(fname)
             poses.append(np.array(frame['transform_matrix']))
-            auds.append(
-                aud_features[min(frame['aud_id'], aud_features.shape[0]-1)])
+            auds.append(aud_features[min(frame['aud_id'], aud_features.shape[0]-1)])
             sample_rects.append(np.array(frame['face_rect'], dtype=np.int32))
-        frame_ids = np.array(frame_ids)
         imgs = np.array(imgs)
         poses = np.array(poses).astype(np.float32)
         auds = np.array(auds).astype(np.float32)
         counts.append(counts[-1] + imgs.shape[0])
-        all_frame_ids.append(frame_ids)
         all_imgs.append(imgs)
         all_poses.append(poses)
         all_auds.append(auds)
         all_sample_rects.append(sample_rects)
 
     i_split = [np.arange(counts[i], counts[i+1]) for i in range(len(splits))]
-    frame_ids = np.concatenate(all_frame_ids, 0)
     imgs = np.concatenate(all_imgs, 0)
     poses = np.concatenate(all_poses, 0)
     auds = np.concatenate(all_auds, 0)
@@ -85,7 +77,7 @@ def load_audface_data(basedir, testskip=1, test_file=None, aud_file=None):
     focal, cx, cy = float(meta['focal_len']), float(
         meta['cx']), float(meta['cy'])
 
-    return frame_ids, imgs, poses, auds, bc_img, [int(H), int(W), focal, cx, cy], sample_rects, sample_rects, i_split
+    return imgs, poses, auds, bc_img, [int(H), int(W), focal, cx, cy], sample_rects, sample_rects, i_split
 
 def get_rays_np(H, W, focal, cx, cy, c2w):
     if cx is None:
@@ -130,12 +122,7 @@ def raw2outputs(raw, z_vals, rays_d, bc_rgb, raw_noise_std=0, white_bkgd=False):
     noise = 0.
     if raw_noise_std > 0.:
         noise = torch.randn(raw[..., 3].shape) * raw_noise_std
-
-        # Overwrite randomly sampled data if pytest
-        if pytest:
-            np.random.seed(0)
-            noise = np.random.rand(*list(raw[..., 3].shape)) * raw_noise_std
-            noise = torch.Tensor(noise)
+        noise = noise.to(raw.device)
 
     # [B*N_rays, N_samples] 
     alpha = raw2alpha(raw[..., 3] + noise, dists)  
