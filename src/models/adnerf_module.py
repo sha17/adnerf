@@ -274,7 +274,7 @@ class AdNeRFLitModule(LightningModule):
     def training_step(self, batch: Any, batch_idx: int):
         """
         """
-        loss, preds, targets = self.step(batch, batch_idx, chunk_sz=2048,
+        loss, preds, targets = self.step(batch, batch_idx, chunk_sz=1024*3,
                                         jitter=True,
                                         output_raw_noise_std=self.options.output_raw_noise_std,
                                         audio_smoothing=True \
@@ -313,7 +313,6 @@ class AdNeRFLitModule(LightningModule):
     def test_step(self, batch: Any, batch_idx: int):
         """
         """
-        # TODO: 수정
         loss, preds, targets = self.step(batch, batch_idx, chunk_sz=1024, output_to_cpu=True)
         preds, targets = self.reshape_outputs("test", preds, targets)
         psnr = self.val_psnr(preds, targets)
@@ -345,7 +344,7 @@ class AdNeRFLitModule(LightningModule):
         if self.options.n_samples_per_ray_fine > 0:
             cfgs.append({'params': self.nerf_fine.parameters(), 'lr': self.hparams.lr, 'betas':(0.9,0.999)})
         optimizer = torch.optim.Adam(cfgs)
-        scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=1000, gamma=0.1)
+        scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=100, gamma=0.1)
         return [optimizer], [scheduler]
 
     def reshape_outputs(self, split, preds, targets):

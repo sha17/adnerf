@@ -34,7 +34,7 @@ options:
   n_samples_per_ray_fine: 128
   n_rays_per_batch: 2048
   sample_rate_in_bbox: 0.95
-  audio_smoothing_start_epoch: 0  # 체크
+  audio_smoothing_start_epoch: 22  # 체크
   audio_smoothing_size: 8
   neareast_distance: 0.6417311906814576
   farthest_distance: 1.2417311906814574
