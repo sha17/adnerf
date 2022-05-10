@@ -67,14 +67,16 @@ class RayDataset(Dataset):
     def __len__(self):
         """
         """
-        return len(self.img_paths)
+        return len(self.rays_o) # len(self.img_paths)
 
     def __getitem__(self, index):
         """
         point sampling per ray  # TODO : augmentation 부분들 함수로 빼기
         """
+
         img = cv2.imread(self.img_paths[index])
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+
 
         if self.split=="train":
             coords = self.coords

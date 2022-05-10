@@ -1,5 +1,5 @@
 _target_: src.models.adnerf_module.AdNeRFLitModule
-lr: 1e-2
+lr: 5e-4
 #weight_decay: 0.00005
 
 options: ${options}
