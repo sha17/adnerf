@@ -7,10 +7,12 @@ from omegaconf import DictConfig
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
 from torchvision.utils import make_grid
 from torchmetrics import MaxMetric
 from torchmetrics.image.psnr import PeakSignalNoiseRatio
 from pytorch_lightning import LightningModule
+import pytorch_lightning.utilities.distributed as dist
 
 from src.models.components.face_nerf import FaceNeRF
 from src.models.components.pos_encoder import PositionEncoder
@@ -24,26 +26,25 @@ class AdNeRFLitModule(LightningModule):
 
     def __init__(
         self,
-        lr,
-        #weight_decay,
         pos_encoder: DictConfig,
         pos_encoder_view_dirs: DictConfig, 
         nerf_coarse: DictConfig,
         nerf_fine: DictConfig,
         audio_net: DictConfig,
         audio_attn_net: DictConfig,
-        options: DictConfig
+        optim_hparams: DictConfig,
+        render_hparams: DictConfig
     ):
         """
         Args:
-            lr:
             pos_encoder:
             pos_encoder_view_dirs:
             nerf_coarse:
             nerf_fine:
             audio_net:
             audio_attn_net:
-            options:
+            optim_hparams:
+            render_hparams:
         """
 
         super().__init__()
@@ -60,13 +61,13 @@ class AdNeRFLitModule(LightningModule):
         nerf_coarse['input_ch'] = pos_encoder.get_output_dim()
         nerf_coarse['input_ch_views'] = pos_encoder_view_dirs.get_output_dim()
         nerf_coarse['dim_aud'] = audio_net.dim_aud
-        nerf_coarse['output_ch'] = 5 if options.n_samples_per_ray_fine > 0 else 4
+        nerf_coarse['output_ch'] = 5 if render_hparams.n_samples_fine > 0 else 4
         nerf_coarse = FaceNeRF(**nerf_coarse)
 
         nerf_fine['input_ch'] = pos_encoder.get_output_dim()
         nerf_fine['input_ch_views'] = pos_encoder_view_dirs.get_output_dim()
         nerf_fine['dim_aud'] = audio_net.dim_aud
-        nerf_fine['output_ch'] = 5 if options.n_samples_per_ray_fine > 0 else 4
+        nerf_fine['output_ch'] = 5 if render_hparams.n_samples_fine > 0 else 4
         nerf_fine = FaceNeRF(**nerf_fine)
 
         self.pos_encoder = pos_encoder
@@ -75,15 +76,12 @@ class AdNeRFLitModule(LightningModule):
         self.nerf_fine = nerf_fine
         self.audio_net = audio_net
         self.audio_attn_net = audio_attn_net
-
-        self.options = options
-
+        self.render_hparams = render_hparams
+        self.optim_hparams = optim_hparams
         self.criterion = nn.MSELoss()
-
         self.train_psnr = PeakSignalNoiseRatio()
         self.val_psnr = PeakSignalNoiseRatio()
         self.test_psnr = PeakSignalNoiseRatio()
-
         self.val_psnr_best = MaxMetric()
 
     def forward(self, 
@@ -134,7 +132,7 @@ class AdNeRFLitModule(LightningModule):
             raw2outputs(   
                 raw, z_vals, rays_d, bg_imgs,
                 output_raw_noise_std,
-                self.options.white_background)
+                self.render_hparams.white_background)
 
         keys = ['raw', 'rgb_map', 'disp_map', 'acc_map', 'weight', 'depth_map']
         outputs = dict(zip(
@@ -150,7 +148,7 @@ class AdNeRFLitModule(LightningModule):
              jitter=False, 
              output_raw_noise_std=0, 
              output_to_cpu=False,
-             audio_smoothing=False): # chunk size 설정
+             audio_smoothing=False):
         """
         Args:
             batch:
@@ -162,12 +160,13 @@ class AdNeRFLitModule(LightningModule):
             audio_smoothing:
         """
         B, R = batch[0].shape[0:2]
-        rays_o, rays_d, view_dirs, bg_imgs, imgs, auds = batch
+        rays_o, rays_d, view_dirs, bg_imgs, auds = batch
+
         if audio_smoothing:
             # [B, W, 16, 29] -> [BxW, 16, 29] 
             auds = self.audio_net(torch.flatten(auds,end_dim=1)) 
             # [B, W, 64] -> [B, W, 64] 
-            auds = self.audio_attn_net(auds.view(B, self.options.audio_smoothing_size, -1))
+            auds = self.audio_attn_net(auds.view(B, self.render_hparams.audio_smoothing_size, -1))
         else:
             auds = self.audio_net(auds) # [B, 64]
 
@@ -194,11 +193,11 @@ class AdNeRFLitModule(LightningModule):
             auds_chunk = auds.unsqueeze(1).expand(-1, rays_o_chunk.shape[1], -1) #[B, 64] > [B, chunk, 64]
 
             # PROCESS COARSE POINTS
-            n_samples_coarse = self.options.n_samples_per_ray_coarse
-            rays_n_chunk = self.options.neareast_distance * torch.ones_like(rays_d_chunk[..., :1]) # [B, chunk]
-            rays_f_chunk = self.options.farthest_distance * torch.ones_like(rays_d_chunk[..., :1])
+            n_samples_coarse = self.render_hparams.n_samples_coarse
+            rays_n_chunk = self.render_hparams.neareast_distance * torch.ones_like(rays_d_chunk[..., :1]) # [B, chunk]
+            rays_f_chunk = self.render_hparams.farthest_distance * torch.ones_like(rays_d_chunk[..., :1])
             t_vals = torch.linspace(0., 1., steps=n_samples_coarse).to(self.device) # 
-            if not self.options.sampling_linearly_in_disparity:
+            if not self.render_hparams.sampling_linearly_in_disparity:
                 z_vals = rays_n_chunk * (1.-t_vals) + rays_f_chunk * (t_vals)
             else:
                 z_vals = 1./(1./rays_n_chunk * (1.-t_vals) + 1./rays_f_chunk * (t_vals))
@@ -223,7 +222,7 @@ class AdNeRFLitModule(LightningModule):
             #update_n_append_dict(outputs_chunk, outputs, output_to_cpu) # 이거 굳이할 필요가?
             
             # PROCESS FINE POINTS
-            n_samples_fine = self.options.n_samples_per_ray_fine
+            n_samples_fine = self.render_hparams.n_samples_fine
             if n_samples_fine > 0:
                 weights = outputs_chunk['weight_coarse']
                 z_vals_mid = .5 * (z_vals[..., 1:] + z_vals[..., :-1])
@@ -251,20 +250,15 @@ class AdNeRFLitModule(LightningModule):
         keys_interested = ['rgb_map_fine', 'disp_map_fine', 'acc_map_fine'] #TODO key이름
         ret_list = [outputs[k] for k in keys_interested]
         ret_dict = [outputs[k] for k in outputs if k not in keys_interested]
-
-        if output_to_cpu:
-            imgs = imgs.cpu()
-        loss = self.criterion(ret_list[0], imgs) # 
-        return loss, ret_list[0], imgs
+        return ret_list[0]
 
     def on_train_start(self):
-        """
-        """
         self.val_psnr_best.reset()
 
     def on_train_epoch_start(self):
-        if self.current_epoch == self.options.audio_smoothing_start_epoch:
-            cfg = {'params': self.audio_attn_net.parameters(),
+        if self.current_epoch == self.render_hparams.audio_smoothing_start_epoch:
+            cfg = {'name': "audio_attn_net",
+                   'params': self.audio_attn_net.parameters(),
                    'lr': self.hparams.lr,
                    'betas': (0.9,0.999)}
             self.trainer.optimizers[0].add_param_group(cfg)
@@ -272,59 +266,59 @@ class AdNeRFLitModule(LightningModule):
             self.print(f'audio smoothing started at {self.global_step}')
 
     def training_step(self, batch: Any, batch_idx: int):
-        """
-        """
-        loss, preds, targets = self.step(batch, batch_idx, chunk_sz=2048,
-                                        jitter=True,
-                                        output_raw_noise_std=self.options.output_raw_noise_std,
-                                        audio_smoothing=True \
-                                            if self.current_epoch >= self.options.audio_smoothing_start_epoch
-                                            else False)
+        preds = self.step(batch[:-1], batch_idx, chunk_sz=2048,
+                          jitter=True,
+                          output_raw_noise_std=self.render_hparams.output_raw_noise_std,
+                          audio_smoothing=True \
+                              if self.current_epoch >= self.render_hparams.audio_smoothing_start_epoch
+                              else False)
+        targets = batch[-1]
+        loss = self.criterion(preds, targets)
         psnr = self.train_psnr(preds, targets)
         self.log("train/loss", loss, on_step=False, on_epoch=True, prog_bar=False)
         self.log("train/psnr", psnr, on_step=False, on_epoch=True, prog_bar=True)
         return {"loss": loss, "preds": preds, "targets": targets}
 
-    def training_epoch_end(self, outputs: List[Any]):
-        """
-        """
-        pass
-
     def validation_step(self, batch: Any, batch_idx: int):
-        """
-        """
-        loss, preds, targets = self.step(batch, batch_idx, chunk_sz=1024, output_to_cpu=True)
-        preds, targets = self.reshape_outputs("val", preds, targets)
+        targets = batch[-1].cpu()
+        preds = self.step(batch[:-1], batch_idx, chunk_sz=1024, output_to_cpu=True)
+        preds = self.reshape_outputs("val", preds)
+        targets = self.reshape_outputs("val", targets)
+        loss = self.criterion(preds, targets)
         psnr = self.val_psnr(preds, targets)
         self.log("val/loss", loss, on_step=False, on_epoch=True, prog_bar=False)
         self.log("val/psnr", psnr, on_step=False, on_epoch=True, prog_bar=True)
-        # self.log_image("val", preds, targets)
         return {"loss": loss, "preds": preds, "targets": targets}
 
-    def validation_epoch_end(self, outputs: List[Any]):
+    def validation_epoch_end(self, outputs):
         """
+        All the outputs after one epoch will be given to generate a video.
         """
         psnr = self.val_psnr.to(self.device).compute()
         self.val_psnr_best.update(psnr)
         self.log("val/psnr_best", self.val_psnr_best.compute(), on_epoch=True, prog_bar=True)
-        preds = torch.cat([output['preds'] for output in outputs],0)
-        self.log_video(preds)
+        preds = torch.cat([output["preds"] for output in outputs], 0)
+        preds = dist.gather_all_tensors(preds)
+        if self.trainer.is_global_zero:
+            self.log_video(torch.cat(preds, 0))
 
     def test_step(self, batch: Any, batch_idx: int):
         """
+        Batches will be assigned to each GPU.
+        Every GPU goes through the same test step.
         """
-        loss, preds, targets = self.step(batch, batch_idx, chunk_sz=1024, output_to_cpu=True)
-        preds, targets = self.reshape_outputs("test", preds, targets)
-        psnr = self.val_psnr(preds, targets)
-        self.log("test/loss", loss, on_step=False, on_epoch=True, prog_bar=False)
-        self.log("test/psnr", psnr, on_step=False, on_epoch=True, prog_bar=True)
-        self.log_image("test", preds, targets)
-        return {"loss": loss, "preds": preds, "targets": targets}
+        preds = self.step(batch, batch_idx, chunk_sz=1024, output_to_cpu=True)
+        preds = self.reshape_outputs("test", preds)
+        return {"preds": preds}
 
-    def test_epoch_end(self, outputs: List[Any]):
+    def test_epoch_end(self, outputs):
         """
+        Predictions from the GPUs after one epoch will be given to generate a video.
         """
-        self.log_video(outputs)
+        preds = torch.cat([output["preds"] for output in outputs], 0)
+        preds = dist.gather_all_tensors(preds)
+        if self.trainer.is_global_zero:
+            self.log_video(torch.cat(preds, 0))
 
     def on_epoch_end(self):
         """
@@ -338,48 +332,50 @@ class AdNeRFLitModule(LightningModule):
         """
         """
         cfgs = [
-            {'params': self.nerf_coarse.parameters(), 'lr': self.hparams.lr, 'betas':(0.9,0.999)},
-            {'params': self.audio_net.parameters(), 'lr': self.hparams.lr, 'betas':(0.9,0.999)},
+            {'name': "nerf_coarse",
+             'params': self.nerf_coarse.parameters(),
+             'lr': self.optim_hparams.base_lr,
+             'betas':(0.9,0.999)},
+            {'name': "audio_net",
+             'params': self.audio_net.parameters(),
+             'lr': self.optim_hparams.base_lr,
+             'betas':(0.9,0.999)},
         ]
-        if self.options.n_samples_per_ray_fine > 0:
-            cfgs.append({'params': self.nerf_fine.parameters(), 'lr': self.hparams.lr, 'betas':(0.9,0.999)})
+        if self.render_hparams.n_samples_fine > 0:
+            cfgs.append({'name': "nerf_fine",
+                         'params': self.nerf_fine.parameters(),
+                         'lr': self.optim_hparams.base_lr,
+                         'betas':(0.9,0.999)})
         optimizer = torch.optim.Adam(cfgs)
-        scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=1000, gamma=0.1)
-        return [optimizer], [scheduler]
+        return [optimizer]
 
-    def reshape_outputs(self, split, preds, targets):
+    def optimizer_step(self, epoch, batch_idx, optimizer, optimizer_idx,
+                    optimizer_closure, on_tpu, using_native_amp, using_lbfgs):
+        optimizer.step(closure=optimizer_closure)
+        new_lr = self.optim_hparams.base_lr *\
+                 self.optim_hparams.decay_rate **\
+                 (self.trainer.global_step / self.optim_hparams.decay_steps)
+        for i, pg in enumerate(optimizer.param_groups):
+            pg['name'] = new_lr if pg['name']!="audio_attn_net" else new_lr*5
+
+    def reshape_outputs(self, split, outputs):
         """
         Args:
             split:
-            preds:
-            targets:
+            outputs
         Returns:
-            preds:
-            targets:
+            outputs
         """
-        batch_size = preds.shape[0]
+        batch_size = outputs.shape[0]
         if split=="val":
             hwfcxy = self.trainer.datamodule.val_ds.hwfcxy
         elif split=="test":
             hwfcxy = self.trainer.datamodule.test_ds.hwfcxy
         img_size = [int(hwfcxy[0]), int(hwfcxy[1])]
-        preds = preds.view(batch_size, *img_size, 3)
-        targets = targets.view(batch_size, *img_size, 3)
-        return preds, targets
+        outputs = outputs.view(batch_size, *img_size, 3)
+        return outputs
 
-    def log_image(self, split, preds, targets):
-        """
-        Args:
-            split:
-            presd:
-            targets:
-            batch_size:
-        """
-        self.logger.experiment.add_image(f'{split}_pred',
-                                         make_grid(preds.permute(0,3,1,2)),
-                                         self.global_step)
-
-    def log_video(self, imgs, fps=30, quality=8):
+    def log_video(self, imgs, fps=25, quality=8):
         """
         Args:
             imgs:

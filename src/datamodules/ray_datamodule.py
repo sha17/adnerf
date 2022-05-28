@@ -19,20 +19,12 @@ class RayDataset(Dataset):
         auds, 
         bg_img,
         hwfcxy,
-        options,
+        render_hparams,
         split, 
         sample_rects=None, 
         mouth_rects=None, 
         img_paths=None,  
     ):
-        """
-        해결해야될 옵션들
-            near
-            far
-            use_viewdirs
-            ndc
-            c2w
-        """ 
         rays_o, rays_d = rays.transpose(3, 0, 1, 2, 4)
 
         self.rays_o = rays_o 
@@ -40,7 +32,7 @@ class RayDataset(Dataset):
         self.auds = auds
         self.bg_img = bg_img 
         self.hwfcxy = hwfcxy
-        self.options = options
+        self.render_hparams = render_hparams
         self.split = split
         self.sample_rects = sample_rects
         self.mouth_rects = mouth_rects
@@ -62,35 +54,28 @@ class RayDataset(Dataset):
             print(f'\t sample_rects:{self.sample_rects.shape}\n'
                   f'\t mouth_rects:{self.mouth_rects.shape}\n'
                   f'\t img_paths:{self.img_paths.shape}\n')
-        
 
     def __len__(self):
-        """
-        """
-        return len(self.rays_o) # len(self.img_paths)
+        return len(self.rays_o)
 
     def __getitem__(self, index):
         """
-        point sampling per ray  # TODO : augmentation 부분들 함수로 빼기
+        point sampling per ray  # TODO : 함수로 빼기
         """
-
-        img = cv2.imread(self.img_paths[index])
-        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-
-
         if self.split=="train":
+            # train일 때는 얼굴 부분에서 ray들을 sampling 해온다.
             coords = self.coords
             sample_rect = self.sample_rects[index]
             mouth_rect = self.mouth_rects[index]
-            if self.options.sample_rate_in_bbox > 0:
+            if self.render_hparams.sample_rate_in_bbox > 0:
                 rect_inds = (coords[:, 0] >= sample_rect[0]) &\
                             (coords[:, 0] <= sample_rect[0] + sample_rect[2]) &\
                             (coords[:, 1] >= sample_rect[1]) &\
                             (coords[:, 1] <= sample_rect[1] + sample_rect[3])
                 coords_rect = coords[rect_inds]
                 coords_norect = coords[~rect_inds]
-                rect_num = int(self.options.n_rays_per_batch * self.options.sample_rate_in_bbox)
-                norect_num = self.options.n_rays_per_batch - rect_num
+                rect_num = int(self.render_hparams.n_rays_per_batch * self.render_hparams.sample_rate_in_bbox)
+                norect_num = self.render_hparams.n_rays_per_batch - rect_num
                 select_inds_rect = np.random.choice(
                     coords_rect.shape[0], size=[rect_num], replace=False) # (N_rand,)
                 select_coords_rect = coords_rect[select_inds_rect].long() # (N_rand, 2)
@@ -99,24 +84,30 @@ class RayDataset(Dataset):
                 select_coords_norect = coords_norect[select_inds_norect].long() # (N_rand, 2)
                 select_coords = np.concatenate((select_coords_rect, select_coords_norect), 0)
             else:
-                select_idxs = np.random.choice(coords.shape[0], size=[self.options.n_rays_per_batch], replace=False)
+                select_idxs = np.random.choice(coords.shape[0], size=[self.render_hparams.n_rays_per_batch], replace=False)
                 select_coords = coords[select_idxs].long()
             rays_o = self.rays_o[index][select_coords[:, 0], select_coords[:, 1]]  # (n_rays_per_batch, 3)
             rays_d = self.rays_d[index][select_coords[:, 0], select_coords[:, 1]]  # (n_rays_per_batch, 3)
-            img = img[select_coords[:, 0], select_coords[:, 1]] 
             bg_img = self.bg_img[select_coords[:, 0], select_coords[:, 1]]
         else:
             H, W, focal, cx, cy = self.hwfcxy
             rays_o = np.reshape(self.rays_o[index], [int(H*W), 3])  # (n_rays_per_batch, 3)
             rays_d = np.reshape(self.rays_d[index], [int(H*W), 3])  # (n_rays_per_batch, 3)
-            img = np.reshape(img, [int(H*W), 3])
             bg_img = np.reshape(self.bg_img, [int(H*W), 3])
 
+        if self.split!="test":
+            img = cv2.imread(self.img_paths[index])
+            img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+            if self.split=="train":
+                img = img[select_coords[:, 0], select_coords[:, 1]]
+            elif self.split=="valid":
+                img = np.reshape(img, [int(H*W), 3])
+            img = np.reshape(img,[-1,3])/255.0 # norm flag 설정
+
         view_dirs = rays_d / np.linalg.norm(rays_d, axis=-1, keepdims=True)      # (n_rays_per_batch, 3)
-        img = np.reshape(img,[-1,3])/255.0 # norm flag 설정
         bg_img = np.reshape(bg_img, [-1,3])/255.0
         if self.split=="train" and self.audio_smoothing:
-            smoothing_window_half = int(self.options.audio_smoothing_size/2)
+            smoothing_window_half = int(self.render_hparams.audio_smoothing_size/2)
             left_i = index - smoothing_window_half
             right_i = index + smoothing_window_half
             pad_left, pad_right = 0, 0
@@ -134,7 +125,11 @@ class RayDataset(Dataset):
             aud = auds_win # [8, 29] TODO: smoothed with padding 출력해서 잘 되었는지 확인해보기
         else:
             aud = self.auds[index]
-        return rays_o, rays_d, view_dirs, bg_img, img, aud
+
+        if self.split != "test":
+            return rays_o, rays_d, view_dirs, bg_img, aud, img
+        else:
+            return rays_o, rays_d, view_dirs, bg_img, aud
 
 
 class RayDataModule(LightningDataModule):
@@ -145,19 +140,17 @@ class RayDataModule(LightningDataModule):
         ray_file: str,
         test_file: str,
         test_ray_file: str,
-        options: DictConfig,
+        render_hparams: DictConfig,
+        num_workers: int,
+        pin_memory: bool,
         train_batch_size: int,
         valid_batch_size: int,
         test_batch_size: int,
-        num_workers: int,
-        pin_memory: bool,
         val_frame_sample_rate:int, 
         test_frame_sample_rate: int,
     ):
         super().__init__()
-
         self.save_hyperparameters(logger=False)
-
         self.ds_train: Optional[Dataset] = None
         self.ds_valid: Optional[Dataset] = None
         self.ds_test: Optional[Dataset] = None
@@ -206,7 +199,7 @@ class RayDataModule(LightningDataModule):
         differentiate whether it's called before trainer.fit()` or `trainer.test()`.
         """
         # load datasets only if they're not loaded already
-        if not self.ds_train and not self.ds_valid:
+        if (stage=="fit" or stage is None) and not self.ds_train and not self.ds_valid:
             img_paths, poses, auds, bg_img, hwfcxy, sample_rects, mouth_rects, ray_idxs_splits =\
                 load_audface_data(self.hparams.data_dir,
                                   self.hparams.val_frame_sample_rate, 
@@ -217,7 +210,7 @@ class RayDataModule(LightningDataModule):
                                         auds[ray_idxs_splits[0]], 
                                         bg_img, 
                                         np.array(hwfcxy),
-                                        self.hparams.options,
+                                        self.hparams.render_hparams,
                                         split="train", 
                                         sample_rects=sample_rects[ray_idxs_splits[0]], 
                                         mouth_rects=mouth_rects[ray_idxs_splits[0]], 
@@ -226,18 +219,18 @@ class RayDataModule(LightningDataModule):
                                         auds[ray_idxs_splits[1]], 
                                         bg_img, 
                                         np.array(hwfcxy),
-                                        self.hparams.options,
+                                        self.hparams.render_hparams,
                                         split="val",
                                         img_paths=img_paths[ray_idxs_splits[1]])
 
-        if not self.ds_test and self.hparams.test_file:
+        if stage=="test" and not self.ds_test and self.hparams.test_file:
             poses, auds, bg_img, hwfcxy =\
                 load_audface_data(self.hparams.data_dir,
                                   self.hparams.test_frame_sample_rate,
                                   test_file=self.hparams.test_file,
                                   aud_file=self.hparams.aud_file)       
             rays = self.get_rays(poses, hwfcxy, self.hparams.data_dir, self.hparams.test_ray_file)              
-            self.ds_test = RayDataset(rays, auds, bg_img, np.array(hwfcxy), self.hparams.options, split="test")      
+            self.ds_test = RayDataset(rays, auds, bg_img, np.array(hwfcxy), self.hparams.render_hparams, split="test")      
    
     def train_dataloader(self):
         return DataLoader(

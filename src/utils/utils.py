@@ -22,8 +22,7 @@ def load_audface_data(basedir, testskip=1, test_file=None, aud_file=None):
         bc_img = cv2.imread(os.path.join(basedir, 'bc.jpg'))
         bc_img = cv2.cvtColor(bc_img, cv2.COLOR_BGR2RGB)
         H, W = bc_img.shape[0], bc_img.shape[1]
-        focal, cx, cy = float(meta['focal_len']), float( #'focal_length' -> 'focal_len'
-            meta['cx']), float(meta['cy'])
+        focal, cx, cy = float(meta['focal_len']), float(meta['cx']), float(meta['cy'])
         return poses, auds, bc_img, [H, W, focal, cx, cy]
 
     splits = ['train', 'val']
@@ -49,7 +48,7 @@ def load_audface_data(basedir, testskip=1, test_file=None, aud_file=None):
             skip = 1
         else:
             skip = testskip
-        for frame in meta['frames'][::skip]: #
+        for frame in meta['frames'][:1000:skip]: #
             fname = os.path.join(basedir, 'head_imgs', str(frame['img_id']) + '.jpg')
             imgs.append(fname)
             poses.append(np.array(frame['transform_matrix']))

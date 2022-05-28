@@ -28,10 +28,9 @@ defaults:
   - override hydra/hydra_logging: colorlog
   - override hydra/job_logging: colorlog
 
-# rendering options
-options:
-  n_samples_per_ray_coarse: 64
-  n_samples_per_ray_fine: 128
+render_hparams:
+  n_samples_coarse: 64
+  n_samples_fine: 128
   n_rays_per_batch: 2048
   sample_rate_in_bbox: 0.95
   audio_smoothing_start_epoch: 22  # 체크

@@ -1,6 +1,6 @@
 defaults:
   - default.yaml
 
-gpus: 2
+gpus: 4
 strategy: ddp
 sync_batchnorm: True

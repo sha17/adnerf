@@ -1,8 +1,11 @@
 _target_: src.models.adnerf_module.AdNeRFLitModule
-lr: 5e-4
-#weight_decay: 0.00005
 
-options: ${options}
+optim_hparams:
+  base_lr: 5e-4
+  decay_rate: 0.1
+  decay_steps: 250000
+
+render_hparams: ${render_hparams}
 
 pos_encoder:
   input_dims: 3
