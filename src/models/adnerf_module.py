@@ -259,7 +259,7 @@ class AdNeRFLitModule(LightningModule):
         if self.current_epoch == self.render_hparams.audio_smoothing_start_epoch:
             cfg = {'name': "audio_attn_net",
                    'params': self.audio_attn_net.parameters(),
-                   'lr': self.hparams.lr,
+                   'lr': self.optim_hparams.base_lr,
                    'betas': (0.9,0.999)}
             self.trainer.optimizers[0].add_param_group(cfg)
             self.trainer.datamodule.train_ds.audio_smoothing = True
