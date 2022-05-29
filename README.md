@@ -6,8 +6,8 @@
 <a href="https://pytorchlightning.ai/"><img alt="Lightning" src="https://img.shields.io/badge/-Lightning-792ee5?logo=pytorchlightning&logoColor=white"></a>
 <a href="https://hydra.cc/"><img alt="Config: Hydra" src="https://img.shields.io/badge/Config-Hydra-89b8cd"></a>
 <a href="https://github.com/ashleve/lightning-hydra-template"><img alt="Template" src="https://img.shields.io/badge/-Lightning--Hydra--Template-017F2F?style=flat&logo=github&labelColor=gray"></a><br>
-[![Paper](http://img.shields.io/badge/paper-arxiv.1001.2234-B31B1B.svg)](https://www.nature.com/articles/nature14539)
-[![Conference](http://img.shields.io/badge/AnyConference-year-4b44ce.svg)](https://papers.nips.cc/paper/2020)
+[![Paper](http://img.shields.io/badge/paper-arxiv.2103.11078-B31B1B.svg)](https://arxiv.org/abs/2103.11078)
+[![Conference](http://img.shields.io/badge/ICCV-2021-4b44ce.svg)](https://openaccess.thecvf.com/ICCV2021)
 
 </div>
 
@@ -61,7 +61,7 @@ PL_TORCH_DISTRIBUTED_BACKEND=gloo python train.py trainer.gpus=1
 PL_TORCH_DISTRIBUTED_BACKEND=gloo python train.py trainer.gpus=2 +trainer.strategy=ddp
 
 # test on Multi GPUs
-PL_TORCH_DISTRIBUTED_BACKEND=gloo python test.py trainer.gpus=4 +trainer.strategy=ddp2 ckpt_path=logs/experiments/runs/default/2022-05-10_05-07-23/checkpoints/last.ckpt
+PL_TORCH_DISTRIBUTED_BACKEND=gloo python test.py trainer.gpus=4 +trainer.strategy=ddp ckpt_path=logs/experiments/runs/default/2022-05-10_05-07-23/checkpoints/last.ckpt
 
 # didn't test it yet but it should work as well on the multi-node environment.
 ```

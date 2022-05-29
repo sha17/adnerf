@@ -48,7 +48,7 @@ def load_audface_data(basedir, testskip=1, test_file=None, aud_file=None):
             skip = 1
         else:
             skip = testskip
-        for frame in meta['frames'][:1000:skip]: #
+        for frame in meta['frames'][::skip]: #
             fname = os.path.join(basedir, 'head_imgs', str(frame['img_id']) + '.jpg')
             imgs.append(fname)
             poses.append(np.array(frame['transform_matrix']))
