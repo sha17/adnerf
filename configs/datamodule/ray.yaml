@@ -8,8 +8,8 @@ test_ray_file: ray_test.npy
 render_hparams: ${render_hparams}
 num_workers: 12
 pin_memory: True
-train_batch_size: 1
-valid_batch_size: 1
-test_batch_size: 32
-val_frame_sample_rate: 8
+train_batch_size: 4
+valid_batch_size: 32
+test_batch_size: 32 
+val_frame_sample_rate: 16
 test_frame_sample_rate: 1

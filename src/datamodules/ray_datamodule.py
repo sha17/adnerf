@@ -9,7 +9,7 @@ import os
 import cv2
 import numpy as np
 
-from src.utils.utils import load_audface_data, get_rays_np
+from src.utils.utils import load_audface_data, get_rays_np, DistributedEvalSampler
 
 
 class RayDataset(Dataset):
@@ -23,7 +23,8 @@ class RayDataset(Dataset):
         split, 
         sample_rects=None, 
         mouth_rects=None, 
-        img_paths=None,  
+        img_paths=None,
+        audio_smoothing=False
     ):
         rays_o, rays_d = rays.transpose(3, 0, 1, 2, 4)
 
@@ -42,7 +43,7 @@ class RayDataset(Dataset):
         coords = torch.stack(torch.meshgrid(torch.linspace(0, int(H)-1, int(H)),
                                             torch.linspace(0, int(W)-1, int(W))), -1)  
         self.coords = torch.reshape(coords, [-1,2]) # (HxW, 2)
-        self.audio_smoothing = False
+        self.audio_smoothing = audio_smoothing
 
         print(f'[{self.split}] RayDataset created\n'
               f'\t rays_o:{self.rays_o.shape}\n'
@@ -106,7 +107,10 @@ class RayDataset(Dataset):
 
         view_dirs = rays_d / np.linalg.norm(rays_d, axis=-1, keepdims=True)      # (n_rays_per_batch, 3)
         bg_img = np.reshape(bg_img, [-1,3])/255.0
-        if self.split=="train" and self.audio_smoothing:
+
+        if self.split=="train" and not self.audio_smoothing:
+            aud = self.auds[index]
+        else:
             smoothing_window_half = int(self.render_hparams.audio_smoothing_size/2)
             left_i = index - smoothing_window_half
             right_i = index + smoothing_window_half
@@ -123,8 +127,6 @@ class RayDataset(Dataset):
             if pad_right > 0:
                 auds_win = np.concatenate((auds_win, np.zeros_like(auds_win)[:pad_right]), 0)
             aud = auds_win # [8, 29] TODO: smoothed with padding 출력해서 잘 되었는지 확인해보기
-        else:
-            aud = self.auds[index]
 
         if self.split != "test":
             return rays_o, rays_d, view_dirs, bg_img, aud, img
@@ -221,7 +223,8 @@ class RayDataModule(LightningDataModule):
                                         np.array(hwfcxy),
                                         self.hparams.render_hparams,
                                         split="val",
-                                        img_paths=img_paths[ray_idxs_splits[1]])
+                                        img_paths=img_paths[ray_idxs_splits[1]],
+                                        audio_smoothing=True)
 
         if stage=="test" and not self.ds_test and self.hparams.test_file:
             poses, auds, bg_img, hwfcxy =\
@@ -230,7 +233,13 @@ class RayDataModule(LightningDataModule):
                                   test_file=self.hparams.test_file,
                                   aud_file=self.hparams.aud_file)       
             rays = self.get_rays(poses, hwfcxy, self.hparams.data_dir, self.hparams.test_ray_file)              
-            self.ds_test = RayDataset(rays, auds, bg_img, np.array(hwfcxy), self.hparams.render_hparams, split="test")      
+            self.ds_test = RayDataset(rays,
+                                      auds,
+                                      bg_img,
+                                      np.array(hwfcxy),
+                                      self.hparams.render_hparams,
+                                      split="test",
+                                      audio_smoothing=True)      
    
     def train_dataloader(self):
         return DataLoader(
@@ -247,7 +256,7 @@ class RayDataModule(LightningDataModule):
             batch_size=self.hparams.valid_batch_size,
             num_workers=self.hparams.num_workers,
             pin_memory=self.hparams.pin_memory,
-            shuffle=False,
+            shuffle=False
         )
 
     def test_dataloader(self):
@@ -256,5 +265,5 @@ class RayDataModule(LightningDataModule):
             batch_size=self.hparams.test_batch_size,
             num_workers=self.hparams.num_workers,
             pin_memory=self.hparams.pin_memory,
-            shuffle=False,
+            shuffle=False
         )

@@ -35,10 +35,9 @@ render_hparams:
   sample_rate_in_bbox: 0.95
   audio_smoothing_start_epoch: 22  # 체크
   audio_smoothing_size: 8
-  neareast_distance: 0.6417311906814576
-  farthest_distance: 1.2417311906814574
+  near_bound: 0.6417311906814576
+  far_bound: 1.2417311906814574
   output_raw_noise_std: 1.1
-  sampling_linearly_in_disparity: True
   white_background: False
 
 

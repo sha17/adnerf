@@ -1,6 +1,7 @@
 import os
 import numpy as np
 import imageio
+import cv2
 from typing import Any, List
 from omegaconf import DictConfig
 
@@ -194,13 +195,13 @@ class AdNeRFLitModule(LightningModule):
 
             # PROCESS COARSE POINTS
             n_samples_coarse = self.render_hparams.n_samples_coarse
-            rays_n_chunk = self.render_hparams.neareast_distance * torch.ones_like(rays_d_chunk[..., :1]) # [B, chunk]
-            rays_f_chunk = self.render_hparams.farthest_distance * torch.ones_like(rays_d_chunk[..., :1])
+            near_bound_chunk = self.render_hparams.near_bound * torch.ones_like(rays_d_chunk[..., :1]) # [B, chunk]
+            far_bound_chunk = self.render_hparams.far_bound * torch.ones_like(rays_d_chunk[..., :1])
             t_vals = torch.linspace(0., 1., steps=n_samples_coarse).to(self.device) # 
-            if not self.render_hparams.sampling_linearly_in_disparity:
-                z_vals = rays_n_chunk * (1.-t_vals) + rays_f_chunk * (t_vals)
-            else:
-                z_vals = 1./(1./rays_n_chunk * (1.-t_vals) + 1./rays_f_chunk * (t_vals))
+            #if not self.render_hparams.sampling_linearly_in_disparity:
+            z_vals = near_bound_chunk * (1.-t_vals) + far_bound_chunk * (t_vals)
+            #else:
+            #   z_vals = 1./(1./near_bound_chunk * (1.-t_vals) + 1./far_bound_chunk * (t_vals))
 
             #z_vals = z_vals.expand([B*R, n_samples_coarse])
             if jitter:
@@ -219,7 +220,7 @@ class AdNeRFLitModule(LightningModule):
                 view_dirs_chunk, auds_chunk, bg_imgs_chunk,
                 self.nerf_coarse, mode="coarse", chunk_sz=1024*64,
                 output_raw_noise_std=output_raw_noise_std)
-            #update_n_append_dict(outputs_chunk, outputs, output_to_cpu) # 이거 굳이할 필요가?
+            update_n_append_dict(outputs_chunk, outputs, output_to_cpu)
             
             # PROCESS FINE POINTS
             n_samples_fine = self.render_hparams.n_samples_fine
@@ -247,10 +248,10 @@ class AdNeRFLitModule(LightningModule):
         outputs = concat_all_items_in_dict(outputs)
 
         # TODO 이거좀 정리
-        keys_interested = ['rgb_map_fine', 'disp_map_fine', 'acc_map_fine'] #TODO key이름
+        keys_interested = ['rgb_map_coarse', 'rgb_map_fine']#, 'disp_map_fine', 'acc_map_fine'] #TODO key이름
         ret_list = [outputs[k] for k in keys_interested]
-        ret_dict = [outputs[k] for k in outputs if k not in keys_interested]
-        return ret_list[0]
+        #ret_dict = [outputs[k] for k in outputs if k not in keys_interested]
+        return outputs['rgb_map_coarse'], outputs['rgb_map_fine'] #ret_list[0], ret_list[1]
 
     def on_train_start(self):
         self.val_psnr_best.reset()
@@ -266,22 +267,20 @@ class AdNeRFLitModule(LightningModule):
             self.print(f'audio smoothing started at {self.global_step}')
 
     def training_step(self, batch: Any, batch_idx: int):
-        preds = self.step(batch[:-1], batch_idx, chunk_sz=2048,
-                          jitter=True,
-                          output_raw_noise_std=self.render_hparams.output_raw_noise_std,
-                          audio_smoothing=True \
-                              if self.current_epoch >= self.render_hparams.audio_smoothing_start_epoch
-                              else False)
+        preds_coarse, preds_fine = self.step(batch[:-1], batch_idx, chunk_sz=2048,
+                            jitter=True,
+                            output_raw_noise_std=self.render_hparams.output_raw_noise_std,
+                            audio_smoothing=self.current_epoch>=self.render_hparams.audio_smoothing_start_epoch)
         targets = batch[-1]
-        loss = self.criterion(preds, targets)
-        psnr = self.train_psnr(preds, targets)
+        loss = self.criterion(preds_coarse, targets) + self.criterion(preds_fine, targets)
+        psnr = self.train_psnr(preds_fine, targets)
         self.log("train/loss", loss, on_step=False, on_epoch=True, prog_bar=False)
         self.log("train/psnr", psnr, on_step=False, on_epoch=True, prog_bar=True)
-        return {"loss": loss, "preds": preds, "targets": targets}
+        return {"loss": loss, "preds": preds_fine, "targets": targets}
 
     def validation_step(self, batch: Any, batch_idx: int):
         targets = batch[-1].cpu()
-        preds = self.step(batch[:-1], batch_idx, chunk_sz=1024, output_to_cpu=True)
+        _, preds = self.step(batch[:-1], batch_idx, chunk_sz=1024, output_to_cpu=True, audio_smoothing=True)
         preds = self.reshape_outputs("val", preds)
         targets = self.reshape_outputs("val", targets)
         loss = self.criterion(preds, targets)
@@ -300,14 +299,14 @@ class AdNeRFLitModule(LightningModule):
         preds = torch.cat([output["preds"] for output in outputs], 0)
         preds = dist.gather_all_tensors(preds)
         if self.trainer.is_global_zero:
-            self.log_video(torch.cat(preds, 0))
+            self.log_video("validation", torch.cat(preds, 0))
 
     def test_step(self, batch: Any, batch_idx: int):
         """
         Batches will be assigned to each GPU.
         Every GPU goes through the same test step.
         """
-        preds = self.step(batch, batch_idx, chunk_sz=1024, output_to_cpu=True)
+        _, preds = self.step(batch, batch_idx, chunk_sz=1024, output_to_cpu=True, audio_smoothing=True)
         preds = self.reshape_outputs("test", preds)
         return {"preds": preds}
 
@@ -316,9 +315,10 @@ class AdNeRFLitModule(LightningModule):
         Predictions from the GPUs after one epoch will be given to generate a video.
         """
         preds = torch.cat([output["preds"] for output in outputs], 0)
-        preds = dist.gather_all_tensors(preds)
+        preds_gathered = dist.gather_all_tensors(preds)
         if self.trainer.is_global_zero:
-            self.log_video(torch.cat(preds, 0))
+            preds_gathered = torch.cat(preds_gathered, 0)
+            self.log_video("test", preds_gathered)#torch.cat(preds_gathered, 0))
 
     def on_epoch_end(self):
         """
@@ -375,7 +375,7 @@ class AdNeRFLitModule(LightningModule):
         outputs = outputs.view(batch_size, *img_size, 3)
         return outputs
 
-    def log_video(self, imgs, fps=25, quality=8):
+    def log_video(self, name, imgs, fps=25, quality=8):
         """
         Args:
             imgs:
@@ -386,7 +386,10 @@ class AdNeRFLitModule(LightningModule):
         video_root = os.path.join(self.logger.log_dir, '../../videos')
         if not os.path.exists(video_root):
             os.makedirs(video_root)
-        video_path = os.path.join(video_root, f'{self.global_step}.mp4')
-        imgs = np.array(list(map(lambda x: to8b(x.numpy()), imgs)))
-        imageio.mimwrite(video_path, imgs, fps=fps, quality=quality)
+        video_path = os.path.join(video_root, f'{name}.avi')
+        imgs = list(map(lambda x: to8b(x.numpy()), imgs))
+        vid_out = cv2.VideoWriter(video_path, cv2.VideoWriter_fourcc('M', 'J', 'P', 'G'), 25, (450, 450))
+        for img in imgs:
+            vid_out.write(img[:,:,::-1])
+        vid_out.release()
         print(f'Video saved at {video_path}.')
