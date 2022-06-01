@@ -33,7 +33,7 @@ render_hparams:
   n_samples_fine: 128
   n_rays_per_batch: 2048
   sample_rate_in_bbox: 0.95
-  audio_smoothing_start_epoch: 22  # 체크
+  audio_smoothing_start_epoch: 22  
   audio_smoothing_size: 8
   near_bound: 0.6417311906814576
   far_bound: 1.2417311906814574

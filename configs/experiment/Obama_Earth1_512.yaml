@@ -1,0 +1,25 @@
+# @package _global_
+
+# to execute this experiment run:
+# python train.py experiment=example
+
+defaults:
+  - override /datamodule: ray.yaml
+  - override /model: adnerf.yaml
+  - override /callbacks: default.yaml
+  - override /logger: tensorboard.yaml # set logger here or use command line (e.g. `python train.py logger=tensorboard`)
+  - override /trainer: default.yaml
+  - override /log_dir: default.yaml
+
+# all parameters below will be merged with parameters from default configurations set above
+# this allows you to overwrite only specified parameters
+
+# name of the run determines folder name in logs
+name: "Obama_Earth1_512"
+
+render_hparams:
+  near_bound: 0.8846035480499268  # Obama: 0.6417311906814576
+  far_bound: 1.4846035480499267  # Obama: 1.2417311906814574
+
+# path to folder with data
+data_dir: ${original_work_dir}/data/Obama_Earth1_512/
