@@ -9,7 +9,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from torchvision.utils import make_grid
 from torchmetrics import MaxMetric
 from torchmetrics.image.psnr import PeakSignalNoiseRatio
 from pytorch_lightning import LightningModule
