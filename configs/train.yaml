@@ -67,6 +67,6 @@ seed: null
 
 # default name for the experiment, determines logging folder path
 # (you can overwrite this name in experiment configs)
-name: "default"
+name: "Obama"
 
 
