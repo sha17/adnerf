@@ -19,8 +19,8 @@ name: "Obama_Earth1_512"
 
 trainer:
   min_epochs: 1
-  max_epochs: 5
-  check_val_every_n_epoch: 2
+  max_epochs: 55
+  check_val_every_n_epoch: 10
 
 render_hparams:
   near_bound: 0.8846035480499268  # Obama: 0.6417311906814576
