@@ -11,5 +11,7 @@ pin_memory: True
 train_batch_size: 4  # v100: max 4, a100: max 8
 valid_batch_size: 32
 test_batch_size: 32 
-val_frame_sample_rate: 16
-test_frame_sample_rate: 1
+val_frame_stride: 16
+val_frame_upto: -1
+test_frame_stride: 1
+test_frame_upto: 70

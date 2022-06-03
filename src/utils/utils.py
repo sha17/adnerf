@@ -10,14 +10,16 @@ import math
 import torch
 import pytorch_lightning.utilities.distributed as dist
 
-def load_audface_data(basedir, testskip=1, test_file=None, aud_file=None):
+def load_audface_data(basedir, stride, upto, test_file=None, aud_file=None):
+    if upto==-1:
+        upto = None
     if test_file is not None:
         with open(os.path.join(basedir, test_file)) as fp:
             meta = json.load(fp)
         poses = []
         auds = []
         aud_features = np.load(os.path.join(basedir, aud_file))
-        for frame in meta['frames'][:70:testskip]: #
+        for frame in meta['frames'][:upto:stride]: #
             poses.append(np.array(frame['transform_matrix']))
             auds.append(aud_features[min(frame['aud_id'], aud_features.shape[0]-1)]) #'frame_id' -> 'img_id'
         poses = np.array(poses).astype(np.float32)
@@ -47,11 +49,11 @@ def load_audface_data(basedir, testskip=1, test_file=None, aud_file=None):
         sample_rects = []
         mouth_rects = []
         #exps = []
-        if s == 'train' or testskip == 0:
-            skip = 1
+        if s == 'train':
+            _stride, _upto = 1, None
         else:
-            skip = testskip
-        for frame in meta['frames'][::skip]: #
+            _stride, _upto = stride, upto
+        for frame in meta['frames'][:_upto:_stride]: #
             fname = os.path.join(basedir, 'head_imgs', str(frame['img_id']) + '.jpg')
             imgs.append(fname)
             poses.append(np.array(frame['transform_matrix']))

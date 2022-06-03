@@ -151,8 +151,10 @@ class RayDataModule(LightningDataModule):
         train_batch_size: int,
         valid_batch_size: int,
         test_batch_size: int,
-        val_frame_sample_rate:int, 
-        test_frame_sample_rate: int,
+        val_frame_stride:int, 
+        val_frame_upto:int,
+        test_frame_stride: int,
+        test_frame_upto:int
     ):
         super().__init__()
         self.save_hyperparameters(logger=False)
@@ -210,7 +212,8 @@ class RayDataModule(LightningDataModule):
         if (stage=="fit" or stage is None) and not self.ds_train and not self.ds_valid:
             img_paths, poses, auds, bg_img, hwfcxy, sample_rects, mouth_rects, ray_idxs_splits =\
                 load_audface_data(self.hparams.data_dir,
-                                  self.hparams.val_frame_sample_rate, 
+                                  self.hparams.val_frame_stride,
+                                  self.hparams.val_frame_upto, 
                                   aud_file=self.hparams.aud_file) 
             rays = self.get_rays(poses, hwfcxy, self.hparams.data_dir, self.hparams.ray_file)
 
@@ -235,7 +238,8 @@ class RayDataModule(LightningDataModule):
         if stage=="test" and not self.ds_test and self.hparams.test_file:
             poses, auds, bg_img, hwfcxy =\
                 load_audface_data(self.hparams.data_dir,
-                                  self.hparams.test_frame_sample_rate,
+                                  self.hparams.test_frame_stride,
+                                  self.hparams.test_frame_upto, 
                                   test_file=self.hparams.test_file,
                                   aud_file=self.hparams.aud_file)       
             rays = self.get_rays(poses, hwfcxy, self.hparams.data_dir, self.hparams.test_ray_file)              
