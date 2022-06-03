@@ -8,7 +8,7 @@ import cv2
 
 import math
 import torch
-import pytorch_lightning.utilities.distributed as dist
+from torchvision.utils import make_grid
 
 def load_audface_data(basedir, stride, upto, test_file=None, aud_file=None):
     if upto==-1:
