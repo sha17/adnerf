@@ -18,6 +18,8 @@ defaults:
 name: "Obama_Earth1_512"
 
 trainer:
+  min_epochs: 1
+  max_epochs: 5
   check_val_every_n_epoch: 2
 
 render_hparams:
