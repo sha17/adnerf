@@ -20,7 +20,9 @@ from src.models.components.pos_encoder import PositionEncoder
 from src.models.components.audio_net import AudioNet
 from src.models.components.audio_attn_net import AudioAttnNet
 
-from src.utils.utils import raw2outputs, sample_pdf, update_n_append_dict, concat_all_items_in_dict
+from src.utils.utils import (raw2outputs, sample_pdf,
+                             update_n_append_dict, concat_all_items_in_dict,
+                             sort_preds, log_video, log_image)
 
 
 class AdNeRFLitModule(LightningModule):
@@ -193,17 +195,13 @@ class AdNeRFLitModule(LightningModule):
             bg_imgs_chunk = bg_imgs[:, i:i+chunk_sz]
             auds_chunk = auds.unsqueeze(1).expand(-1, rays_o_chunk.shape[1], -1) #[B, 64] > [B, chunk, 64]
 
-            # PROCESS COARSE POINTS
+            # process coarse points by chunk as well
             n_samples_coarse = self.render_hparams.n_samples_coarse
             near_bound_chunk = self.render_hparams.near_bound * torch.ones_like(rays_d_chunk[..., :1]) # [B, chunk]
             far_bound_chunk = self.render_hparams.far_bound * torch.ones_like(rays_d_chunk[..., :1])
             t_vals = torch.linspace(0., 1., steps=n_samples_coarse).to(self.device) # 
-            #if not self.render_hparams.sampling_linearly_in_disparity:
             z_vals = near_bound_chunk * (1.-t_vals) + far_bound_chunk * (t_vals)
-            #else:
-            #   z_vals = 1./(1./near_bound_chunk * (1.-t_vals) + 1./far_bound_chunk * (t_vals))
 
-            #z_vals = z_vals.expand([B*R, n_samples_coarse])
             if jitter:
                 # get intervals between samples
                 mids = .5 * (z_vals[..., 1:] + z_vals[..., :-1])
@@ -214,7 +212,6 @@ class AdNeRFLitModule(LightningModule):
                 t_rand[..., -1] = 1.0
                 z_vals = lower + (upper - lower) * t_rand
 
-            # run network by another chunk
             outputs_chunk = self.forward( 
                 rays_o_chunk, rays_d_chunk, z_vals,
                 view_dirs_chunk, auds_chunk, bg_imgs_chunk,
@@ -222,7 +219,7 @@ class AdNeRFLitModule(LightningModule):
                 output_raw_noise_std=output_raw_noise_std)
             update_n_append_dict(outputs_chunk, outputs, output_to_cpu)
             
-            # PROCESS FINE POINTS
+            # process fine points by chunk as well
             n_samples_fine = self.render_hparams.n_samples_fine
             if n_samples_fine > 0:
                 weights = outputs_chunk['weight_coarse']
@@ -233,7 +230,6 @@ class AdNeRFLitModule(LightningModule):
                 z_samples = z_samples.detach()
                 z_vals, _ = torch.sort(torch.cat([z_vals, z_samples], -1), -1)
                 
-                # run network by another chunk
                 outputs_chunk = self.forward(
                     rays_o_chunk, rays_d_chunk, z_vals,
                     view_dirs_chunk, auds_chunk, bg_imgs_chunk,
@@ -241,8 +237,7 @@ class AdNeRFLitModule(LightningModule):
                     output_raw_noise_std=output_raw_noise_std)
                 outputs_chunk['z_std'] = torch.std(z_samples, dim=-1, unbiased=False)
                 outputs_chunk['last_weight'] = weights[..., -1]
-                
-            update_n_append_dict(outputs_chunk, outputs, output_to_cpu)
+                update_n_append_dict(outputs_chunk, outputs, output_to_cpu)
 
         # gather all the results and reshape
         outputs = concat_all_items_in_dict(outputs)
@@ -279,10 +274,9 @@ class AdNeRFLitModule(LightningModule):
         return {"loss": loss, "preds": preds_fine, "targets": targets}
 
     def validation_step(self, batch: Any, batch_idx: int):
-        targets = batch[-1].cpu()
         _, preds = self.step(batch[:-1], batch_idx, chunk_sz=1024, output_to_cpu=True, audio_smoothing=True)
-        preds = self.reshape_outputs("val", preds)
-        targets = self.reshape_outputs("val", targets)
+        preds = preds.view(-1, *self.trainer.datamodule.val_ds.img_size, 3)
+        targets = batch[-1].cpu().view(-1, *self.trainer.datamodule.val_ds.img_size, 3)
         loss = self.criterion(preds, targets)
         psnr = self.val_psnr(preds, targets)
         self.log("val/loss", loss, on_step=False, on_epoch=True, prog_bar=False)
@@ -296,10 +290,14 @@ class AdNeRFLitModule(LightningModule):
         psnr = self.val_psnr.to(self.device).compute()
         self.val_psnr_best.update(psnr)
         self.log("val/psnr_best", self.val_psnr_best.compute(), on_epoch=True, prog_bar=True)
-        preds = torch.cat([output["preds"] for output in outputs], 0)
-        preds = dist.gather_all_tensors(preds)
+        preds_gpu = torch.cat([output["preds"] for output in outputs], 0)
+        preds_all = dist.gather_all_tensors(preds_gpu)
         if self.trainer.is_global_zero:
-            self.log_video("validation", torch.cat(preds, 0))
+            dataset_size = len(self.trainer.datamodule.val_ds)
+            img_size = self.trainer.datamodule.val_ds.img_size
+            world_size = self.trainer.world_size
+            preds_all = sort_preds(preds_all, dataset_size, img_size, world_size)
+            log_image(self.logger, "val_imgs", self.trainer.global_step, preds_all)
 
     def test_step(self, batch: Any, batch_idx: int):
         """
@@ -307,18 +305,21 @@ class AdNeRFLitModule(LightningModule):
         Every GPU goes through the same test step.
         """
         _, preds = self.step(batch, batch_idx, chunk_sz=1024, output_to_cpu=True, audio_smoothing=True)
-        preds = self.reshape_outputs("test", preds)
+        preds = preds.view(-1, *self.trainer.datamodule.test_ds.img_size, 3)
         return {"preds": preds}
 
     def test_epoch_end(self, outputs):
         """
         Predictions from the GPUs after one epoch will be given to generate a video.
         """
-        preds = torch.cat([output["preds"] for output in outputs], 0)
-        preds_gathered = dist.gather_all_tensors(preds)
+        preds_gpu = torch.cat([output["preds"] for output in outputs], 0)
+        preds_all = dist.gather_all_tensors(preds_gpu)
         if self.trainer.is_global_zero:
-            preds_gathered = torch.cat(preds_gathered, 0)
-            self.log_video("test", preds_gathered)#torch.cat(preds_gathered, 0))
+            dataset_size = len(self.trainer.datamodule.test_ds)
+            img_size = self.trainer.datamodule.test_ds.img_size
+            world_size = self.trainer.world_size
+            preds_all = sort_preds(preds_all, dataset_size, img_size, world_size)
+            log_video(self.logger, "test_video", preds_all, fps=self.render_hparams.fps)
 
     def on_epoch_end(self):
         """
@@ -357,39 +358,3 @@ class AdNeRFLitModule(LightningModule):
                  (self.trainer.global_step / self.optim_hparams.decay_steps)
         for i, pg in enumerate(optimizer.param_groups):
             pg['name'] = new_lr if pg['name']!="audio_attn_net" else new_lr*5
-
-    def reshape_outputs(self, split, outputs):
-        """
-        Args:
-            split:
-            outputs
-        Returns:
-            outputs
-        """
-        batch_size = outputs.shape[0]
-        if split=="val":
-            hwfcxy = self.trainer.datamodule.val_ds.hwfcxy
-        elif split=="test":
-            hwfcxy = self.trainer.datamodule.test_ds.hwfcxy
-        img_size = [int(hwfcxy[0]), int(hwfcxy[1])]
-        outputs = outputs.view(batch_size, *img_size, 3)
-        return outputs
-
-    def log_video(self, name, imgs, fps=25, quality=8):
-        """
-        Args:
-            imgs:
-            fps:
-            quality:
-        """
-        def to8b(x): return (255*np.clip(x, 0, 1)).astype(np.uint8)
-        video_root = os.path.join(self.logger.log_dir, '../../videos')
-        if not os.path.exists(video_root):
-            os.makedirs(video_root)
-        video_path = os.path.join(video_root, f'{name}.avi')
-        imgs = list(map(lambda x: to8b(x.numpy()), imgs))
-        vid_out = cv2.VideoWriter(video_path, cv2.VideoWriter_fourcc('M', 'J', 'P', 'G'), 25, (450, 450))
-        for img in imgs:
-            vid_out.write(img[:,:,::-1])
-        vid_out.release()
-        print(f'Video saved at {video_path}.')

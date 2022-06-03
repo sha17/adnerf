@@ -17,9 +17,15 @@ defaults:
 # name of the run determines folder name in logs
 name: "Obama_Earth1_512"
 
+trainer:
+  check_val_every_n_epoch: 10
+
 render_hparams:
   near_bound: 0.8846035480499268  # Obama: 0.6417311906814576
   far_bound: 1.4846035480499267  # Obama: 1.2417311906814574
+
+datamodule:
+  test_batch_size: 8
 
 # path to folder with data
 data_dir: ${original_work_dir}/data/Obama_Earth1_512/

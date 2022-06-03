@@ -12,3 +12,5 @@ check_val_every_n_epoch: 10
 
 # ckpt path
 resume_from_checkpoint: null
+
+replace_sampler_ddp: False

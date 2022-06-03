@@ -8,8 +8,7 @@ import cv2
 
 import math
 import torch
-from torch.utils.data import Sampler
-import torch.distributed as dist
+import pytorch_lightning.utilities.distributed as dist
 
 def load_audface_data(basedir, testskip=1, test_file=None, aud_file=None):
     if test_file is not None:
@@ -18,8 +17,7 @@ def load_audface_data(basedir, testskip=1, test_file=None, aud_file=None):
         poses = []
         auds = []
         aud_features = np.load(os.path.join(basedir, aud_file))
-
-        for frame in meta['frames'][::testskip]: #
+        for frame in meta['frames'][:70:testskip]: #
             poses.append(np.array(frame['transform_matrix']))
             auds.append(aud_features[min(frame['aud_id'], aud_features.shape[0]-1)]) #'frame_id' -> 'img_id'
         poses = np.array(poses).astype(np.float32)
@@ -209,110 +207,43 @@ def concat_all_items_in_dict(x):
         y[key] = torch.cat(x[key], 1)
     return y
 
-
-import math
-import torch
-from torch.utils.data import Sampler
-import torch.distributed as dist
-
-
-class DistributedEvalSampler(Sampler):
-    r"""
-    DistributedEvalSampler is different from DistributedSampler.
-    It does NOT add extra samples to make it evenly divisible.
-    DistributedEvalSampler should NOT be used for training. The distributed processes could hang forever.
-    See this issue for details: https://github.com/pytorch/pytorch/issues/22584
-    shuffle is disabled by default
-    DistributedEvalSampler is for evaluation purpose where synchronization does not happen every epoch.
-    Synchronization should be done outside the dataloader loop.
-    Sampler that restricts data loading to a subset of the dataset.
-    It is especially useful in conjunction with
-    :class:`torch.nn.parallel.DistributedDataParallel`. In such a case, each
-    process can pass a :class`~torch.utils.data.DistributedSampler` instance as a
-    :class:`~torch.utils.data.DataLoader` sampler, and load a subset of the
-    original dataset that is exclusive to it.
-    .. note::
-        Dataset is assumed to be of constant size.
-    Arguments:
-        dataset: Dataset used for sampling.
-        num_replicas (int, optional): Number of processes participating in
-            distributed training. By default, :attr:`rank` is retrieved from the
-            current distributed group.
-        rank (int, optional): Rank of the current process within :attr:`num_replicas`.
-            By default, :attr:`rank` is retrieved from the current distributed
-            group.
-        shuffle (bool, optional): If ``True`` (default), sampler will shuffle the
-            indices.
-        seed (int, optional): random seed used to shuffle the sampler if
-            :attr:`shuffle=True`. This number should be identical across all
-            processes in the distributed group. Default: ``0``.
-    .. warning::
-        In distributed mode, calling the :meth`set_epoch(epoch) <set_epoch>` method at
-        the beginning of each epoch **before** creating the :class:`DataLoader` iterator
-        is necessary to make shuffling work properly across multiple epochs. Otherwise,
-        the same ordering will be always used.
-    Example::
-        >>> sampler = DistributedSampler(dataset) if is_distributed else None
-        >>> loader = DataLoader(dataset, shuffle=(sampler is None),
-        ...                     sampler=sampler)
-        >>> for epoch in range(start_epoch, n_epochs):
-        ...     if is_distributed:
-        ...         sampler.set_epoch(epoch)
-        ...     train(loader)
+def sort_preds(preds, dataset_size, img_size, world_size):
     """
+    """
+    dataset_indices = list(range(dataset_size))
+    preds_sorted = torch.zeros(dataset_size, *img_size, 3, dtype=preds[0].dtype)
+    for rank in range(world_size):
+        subset_indices = dataset_indices[rank:dataset_size:world_size]
+        preds_sorted[subset_indices] = preds[rank]
+    return preds_sorted
 
-    def __init__(self, dataset, num_replicas=None, rank=None, shuffle=False, seed=0):
-        if num_replicas is None:
-            if not dist.is_available():
-                raise RuntimeError("Requires distributed package to be available")
-            num_replicas = dist.get_world_size()
-        if rank is None:
-            if not dist.is_available():
-                raise RuntimeError("Requires distributed package to be available")
-            rank = dist.get_rank()
-        self.dataset = dataset
-        self.num_replicas = num_replicas
-        self.rank = rank
-        self.epoch = 0
-        # self.num_samples = int(math.ceil(len(self.dataset) * 1.0 / self.num_replicas))
-        # self.total_size = self.num_samples * self.num_replicas
-        self.total_size = len(self.dataset)         # true value without extra samples
-        indices = list(range(self.total_size))
-        indices = indices[self.rank:self.total_size:self.num_replicas]
-        self.num_samples = len(indices)             # true value without extra samples
+def log_video(logger, name, imgs, fps=25, quality=8):
+    """
+    Args:
+        imgs:
+        fps:
+        quality:
+    """
+    def to8b(x): return (255*np.clip(x, 0, 1)).astype(np.uint8)
+    video_root = os.path.join(logger.log_dir, '../../videos')
+    if not os.path.exists(video_root):
+        os.makedirs(video_root)
+    video_path = os.path.join(video_root, f'{name}.avi')
+    img_size = imgs.shape[1:-1]
+    imgs = list(map(lambda x: to8b(x.numpy()), imgs))
+    vid_out = cv2.VideoWriter(video_path, cv2.VideoWriter_fourcc(*'MJPG'), fps, img_size) #25 768
+    for img in imgs:
+        vid_out.write(img[:,:,::-1])
+    vid_out.release()
+    print(f'Video saved at {video_path}.')
 
-        self.shuffle = shuffle
-        self.seed = seed
-
-    def __iter__(self):
-        if self.shuffle:
-            # deterministically shuffle based on epoch and seed
-            g = torch.Generator()
-            g.manual_seed(self.seed + self.epoch)
-            indices = torch.randperm(len(self.dataset), generator=g).tolist()
-        else:
-            indices = list(range(len(self.dataset)))
-
-
-        # # add extra samples to make it evenly divisible
-        # indices += indices[:(self.total_size - len(indices))]
-        # assert len(indices) == self.total_size
-
-        # subsample
-        indices = indices[self.rank:self.total_size:self.num_replicas]
-        assert len(indices) == self.num_samples
-
-        return iter(indices)
-
-    def __len__(self):
-        return self.num_samples
-
-    def set_epoch(self, epoch):
-        r"""
-        Sets the epoch for this sampler. When :attr:`shuffle=True`, this ensures all replicas
-        use a different random ordering for each epoch. Otherwise, the next iteration of this
-        sampler will yield the same ordering.
-        Arguments:
-            epoch (int): _epoch number.
-        """
-        self.epoch = epoch
+def log_image(logger, name, step, preds):
+    """
+    Args:
+        name:
+        step:
+        preds:
+    """
+    logger.experiment.add_image(name,
+                                make_grid(preds.permute(0,3,1,2)),
+                                step)

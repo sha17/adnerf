@@ -24,6 +24,7 @@ render_hparams:
   far_bound: 1.2417311906814574
   audio_smoothing_size: 8
   white_background: False
+  fps: 25
 
 original_work_dir: ${hydra:runtime.cwd}
 
