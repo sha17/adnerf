@@ -27,9 +27,15 @@ render_hparams:
   far_bound: 1.4846035480499267  # Obama: 1.2417311906814574
   fps: 30
 
+model:
+  optim_hparams:
+    base_lr: 5e-4
+    decay_rate: 0.1
+    decay_steps: 250000
+
 datamodule:
   train_batch_size: 4  # v100: max 4, a100: max 8
-  valid_batch_size: 8
+  valid_batch_size: 2
   test_batch_size: 8 
   val_frame_stride: 16
   val_frame_upto: -1
