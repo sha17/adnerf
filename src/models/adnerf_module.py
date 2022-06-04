@@ -289,13 +289,15 @@ class AdNeRFLitModule(LightningModule):
         psnr = self.val_psnr.to(self.device).compute()
         self.val_psnr_best.update(psnr)
         self.log("val/psnr_best", self.val_psnr_best.compute(), on_epoch=True, prog_bar=True)
+        # each gpu process contains tensors of different sizes
+        # so pad them so that they have the same size s.t. gather_all_tensor works
         preds_gpu = torch.cat([output["preds"] for output in outputs], 0)
-        preds_all = dist.gather_all_tensors(preds_gpu)
+        preds_all_padded = gather_with_padding(preds_gpu)
         if self.trainer.is_global_zero:
             dataset_size = len(self.trainer.datamodule.val_ds)
             img_size = self.trainer.datamodule.val_ds.img_size
             world_size = self.trainer.world_size
-            preds_all = sort_preds(preds_all, dataset_size, img_size, world_size)
+            preds_all = sort_preds(preds_all_padded, preds_all_sz, dataset_size, img_size, world_size)
             log_image(self.logger, "val_imgs", self.trainer.global_step, preds_all)
 
     def test_step(self, batch: Any, batch_idx: int):
@@ -312,12 +314,12 @@ class AdNeRFLitModule(LightningModule):
         Predictions from the GPUs after one epoch will be given to generate a video.
         """
         preds_gpu = torch.cat([output["preds"] for output in outputs], 0)
-        preds_all = dist.gather_all_tensors(preds_gpu)
+        preds_all_padded = gather_with_padding(preds_gpu)
         if self.trainer.is_global_zero:
             dataset_size = len(self.trainer.datamodule.test_ds)
             img_size = self.trainer.datamodule.test_ds.img_size
             world_size = self.trainer.world_size
-            preds_all = sort_preds(preds_all, dataset_size, img_size, world_size)
+            preds_all = sort_preds(preds_all_padded, preds_all_sz, dataset_size, img_size, world_size)
             log_video(self.logger, "test_video", preds_all, fps=self.render_hparams.fps)
 
     def on_epoch_end(self):
@@ -357,3 +359,19 @@ class AdNeRFLitModule(LightningModule):
                  (self.trainer.global_step / self.optim_hparams.decay_steps)
         for i, pg in enumerate(optimizer.param_groups):
             pg['name'] = new_lr if pg['name']!="audio_attn_net" else new_lr*5
+
+    def gather_with_padding(self, x):
+        """
+        each gpu process contains tensors of different sizes
+        so pad them so that they have the same size to make gather_all_tensors work
+        """
+        x_sz = torch.tensor([x.shape[0]], dtype=torch.int64, device=preds_gpu.device)
+        x_all_sz = dist.gather_all_tensors(x_sz)
+        x_all_sz_max = torch.cat(x_all_sz, 0).max()
+        x_gpu_padded = torch.empty(x_all_sz_max,
+                                   *x.shape[1:],
+                                   dtype=x.dtype,
+                                   device=x.device)
+        x_gpu_padded[:x.shape[0]] = x
+        x_all_padded = dist.gather_all_tensors(x_gpu_padded)
+        return x_all_padded

@@ -209,14 +209,14 @@ def concat_all_items_in_dict(x):
         y[key] = torch.cat(x[key], 1)
     return y
 
-def sort_preds(preds, dataset_size, img_size, world_size):
+def sort_preds(preds_padded, preds_sz, dataset_size, img_size, world_size):
     """
     """
     dataset_indices = list(range(dataset_size))
-    preds_sorted = torch.zeros(dataset_size, *img_size, 3, dtype=preds[0].dtype)
+    preds_sorted = torch.zeros(dataset_size, *img_size, 3, dtype=preds_padded[0].dtype)
     for rank in range(world_size):
         subset_indices = dataset_indices[rank:dataset_size:world_size]
-        preds_sorted[subset_indices] = preds[rank]
+        preds_sorted[subset_indices] = preds_padded[rank][:preds_sz[rank]]
     return preds_sorted
 
 def log_video(logger, name, imgs, fps=25, quality=8):
